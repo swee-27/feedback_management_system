@@ -5,8 +5,9 @@ pipeline {
         IMAGE_NAME = "feedback-system:latest"
         BLUE_NAME = "blue"
         GREEN_NAME = "green"
-        APP_PORT = 3000
-        TEMP_PORT = 3001
+        MAIN_PORT = 3001          // live app port
+        TEMP_PORT = 3002          // temporary test port
+        APP_PORT = 3000           // app inside container
     }
 
     stages {
@@ -26,7 +27,7 @@ pipeline {
 
         stage('Run Unit Tests') {
             steps {
-                sh 'echo "Running unit tests..."'
+                echo "🧪 Running unit tests..."
                 // Example: sh 'npm test'
             }
         }
@@ -34,35 +35,39 @@ pipeline {
         stage('Blue-Green Deploy') {
             steps {
                 script {
-                    // Determine which container is active
+                    // Identify which container is currently active
                     def active = sh(script: "docker ps --filter 'name=${BLUE_NAME}' --format '{{.Names}}'", returnStdout: true).trim()
-                    def inactive = active == BLUE_NAME ? GREEN_NAME : BLUE_NAME
-                    def oldContainer = active ?: BLUE_NAME  // If no active, default to blue
+                    def newColor = (active == BLUE_NAME) ? GREEN_NAME : BLUE_NAME
+                    def oldColor = (newColor == BLUE_NAME) ? GREEN_NAME : BLUE_NAME
 
-                    echo "Active container: ${active ?: 'none'}, Deploying to: ${inactive}"
+                    echo "Active container: ${active ?: 'none'}, deploying new version to: ${newColor}"
 
-                    // Remove old inactive container if exists
-                    sh "docker rm -f ${inactive} || true"
+                    // Stop and remove the newColor container if it exists
+                    sh "docker rm -f ${newColor} || true"
 
-                    // Run new version on temporary port
-                    sh "docker run -d -p ${TEMP_PORT}:${APP_PORT} --name ${inactive} ${IMAGE_NAME}"
+                    // Run new container on TEMP_PORT for testing
+                    sh "docker run -d -p ${TEMP_PORT}:${APP_PORT} --name ${newColor} ${IMAGE_NAME}"
+                    echo "🚀 Started ${newColor} container on temporary port ${TEMP_PORT}"
 
-                    // Wait and perform simple health check
+                    // Health check
                     sleep 10
                     def status = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:${TEMP_PORT}", returnStdout: true).trim()
                     if (status != "200") {
-                        error("🚨 Health check failed. Deployment aborted.")
+                        error("❌ Health check failed on ${newColor}. Deployment aborted.")
                     }
 
-                    // Stop old container if exists
+                    echo "✅ Health check passed for ${newColor}. Switching traffic..."
+
+                    // Stop and remove old active container if exists
                     if (active) {
-                        sh "docker stop ${oldContainer} || true"
-                        sh "docker rm -f ${oldContainer} || true"
+                        sh "docker rm -f ${oldColor} || true"
                     }
 
-                    // Swap new container to main port
-                    sh "docker run -d -p ${APP_PORT}:${APP_PORT} --name ${inactive} ${IMAGE_NAME}"
-                    echo "✅ Blue-Green deployment complete. ${inactive} is now live on port ${APP_PORT}"
+                    // Run new container on MAIN_PORT (live)
+                    sh "docker rm -f ${newColor} || true"
+                    sh "docker run -d -p ${MAIN_PORT}:${APP_PORT} --name ${newColor} ${IMAGE_NAME}"
+
+                    echo "🎉 Deployment complete. ${newColor} is live on port ${MAIN_PORT}"
                 }
             }
         }
