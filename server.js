@@ -7,7 +7,7 @@ app.use(express.json());
 // Use /feedback routes
 app.use('/feedback', feedbackRoutes);
 
-// Root
+// Rot
 app.get('/', (req, res) => {
   res.send('Feedback Management System is Running!');
 });
